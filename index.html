@@ -384,7 +384,9 @@ function refreshUi() {
     $('fileNote').hidden = location.protocol !== 'file:';
   }
 
-  if (gateway) check(2, 'ok', '이 컴퓨터에 USB로 연결됨' + (serverOk ? ' · 중계 중' : ''));
+  if (gateway && gotSerial) check(2, 'ok', '보드 응답 확인 · 이 컴퓨터에 USB로 연결됨' + (serverOk ? ' · 중계 중' : ''));
+  else if (gateway && noReply) check(2, 'bad', 'USB 포트는 열렸지만 보드가 응답하지 않습니다. 보드의 EN(RST) 버튼을 눌러 보고, 그래도 안 되면 traffic_light.ino를 다시 업로드하세요.');
+  else if (gateway) check(2, 'wait', 'USB 포트 열림 · 보드 응답을 기다리는 중…');
   else if (!serverOk) check(2, 'wait', 'Firebase 연결을 기다리는 중…');
   else if (boardOk) check(2, 'ok', '온라인 (중계 컴퓨터 연결됨)');
   else check(2, 'bad', '오프라인 · 보드가 꽂힌 컴퓨터에서 이 주소를 열고 [USB 보드 연결]을 누르세요.');
@@ -570,12 +572,10 @@ async function usbConnect() {
     port = null;
     return;
   }
-  // ESP32가 리셋/부트 모드에 묶이지 않도록 제어선을 정상 상태로
-  try { await port.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch (e) {}
   writer = port.writable.getWriter();
   reader = port.readable.getReader();
 
-  gateway = true; boardOk = true;
+  gateway = true; boardOk = true; gotSerial = false; noReply = false;
   boardState = { state: 'OFF', at: Date.now() };
   log('USB 보드에 연결되었습니다.');
   applyState('OFF');
@@ -585,16 +585,16 @@ async function usbConnect() {
   setTimeout(function () { serialSend('STATUS'); }, 1200);
   setTimeout(function () {
     if (gateway && !gotSerial) {
+      noReply = true; refreshUi();
       log('보드에서 응답이 없습니다.', 'err');
       setMsg('보드가 응답하지 않습니다. 보드의 EN(RST) 버튼을 한 번 누르거나, 올바른 COM 포트인지 확인하세요.');
     }
   }, 4000);
 }
-var gotSerial = false;
+var gotSerial = false, noReply = false;
 
 async function readLoop() {
   var dec = new TextDecoder(), buf = '';
-  gotSerial = false;
   try {
     while (true) {
       var r = await reader.read();
@@ -613,7 +613,7 @@ async function readLoop() {
 }
 
 function onSerialLine(line) {
-  gotSerial = true;
+  if (!gotSerial) { gotSerial = true; noReply = false; setMsg(''); refreshUi(); }
   log('USB ← ' + line, 'rx');
   if (line.indexOf('STATE:') !== 0) return;
   var s = line.slice(6);
